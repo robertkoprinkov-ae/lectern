@@ -95,8 +95,30 @@ input[type=range]::-moz-range-thumb { width: 16px; height: 16px; border-radius: 
 .msg { font-size: 0.86rem; color: var(--chalk); margin: 0; }
 .chips { display: flex; gap: 8px; flex-shrink: 0; }
 .chip[aria-pressed="true"] { background: var(--chalk); color: #1C1606; border-color: transparent; }
-.slide-wrap { position: relative; display: block; border-radius: 10px; overflow: hidden; background: #0F1F19; aspect-ratio: 16 / 9; }
-.slide { display: block; width: 100%; height: 100%; object-fit: contain; }
+.slide-box { position: relative; }
+.slide-wrap { position: relative; display: block; width: 100%; border: 0; padding: 0; border-radius: 10px; overflow: hidden; background: #0F1F19; aspect-ratio: 16 / 9; cursor: zoom-in; touch-action: pan-y; }
+.slide { display: block; width: 100%; height: 100%; object-fit: contain; -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; }
+.slide-reset, .viewer-reset {
+  display: inline-flex; align-items: center; gap: 6px; border: 0; border-radius: 999px; padding: 6px 12px; min-height: 34px;
+  font-family: var(--font-ui); font-size: 0.82rem; font-weight: 600; background: var(--chalk); color: #1C1606;
+}
+.slide-reset svg, .viewer-reset svg { width: 15px; height: 15px; }
+.slide-reset { position: absolute; left: 8px; top: 8px; }
+
+/* Full-screen slide viewer */
+.viewer { position: fixed; inset: 0; z-index: 10; background: #000; overflow: hidden; touch-action: none; }
+.viewer img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; transform-origin: 0 0; -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; }
+.viewer-bar {
+  position: absolute; left: 0; right: 0; top: 0; display: flex; align-items: center; gap: 10px; pointer-events: none;
+  padding: max(12px, env(safe-area-inset-top, 0px)) max(12px, env(safe-area-inset-right, 0px)) 12px max(12px, env(safe-area-inset-left, 0px));
+}
+.viewer-bar > * { pointer-events: auto; }
+.viewer-close { margin-left: auto; width: 44px; height: 44px; border-radius: 50%; border: 0; background: rgba(255, 255, 255, 0.18); color: #fff; display: grid; place-items: center; }
+.viewer-close svg { width: 22px; height: 22px; }
+.viewer-n {
+  position: absolute; left: 50%; transform: translateX(-50%); bottom: max(14px, env(safe-area-inset-bottom, 0px));
+  font-family: var(--font-mono); font-size: 0.8rem; color: #fff; background: rgba(0, 0, 0, 0.55); padding: 3px 8px; border-radius: 6px;
+}
 .slide-n { position: absolute; right: 8px; bottom: 8px; font-family: var(--font-mono); font-size: 0.7rem; color: #fff; background: rgba(0, 0, 0, 0.55); padding: 2px 6px; border-radius: 5px; }
 .cc-line { margin: 0; min-height: 4.4em; font-size: 0.98rem; line-height: 1.45; color: var(--on-board); overflow-wrap: anywhere; }
 .empty-board p { margin: 6px 0 0; color: var(--on-board-muted); }
@@ -218,9 +240,22 @@ details.help summary { font-weight: 600; cursor: pointer; }
       <li>Right-click it › Copy Link. Paste it into “Recording link” here; Universal Clipboard carries it to your iPhone.</li>
     </ol>
     <p>If the recording can be downloaded, save it to iCloud Drive and use “Choose a saved file” instead. Files are kept on this iPhone, so they also play offline.</p>
-    <p>For Cassyni lectures the board shows the slide being discussed (tap it to open it full size), and the CC button shows captions when Cassyni has them.</p>
+    <p>For Cassyni lectures the board shows the slide being discussed. Swipe it left or right to look at other slides, and tap Reset to go back to the one being discussed. Tap the slide to open it full screen, where you can pinch or double-tap to zoom. The CC button shows captions when Cassyni has them.</p>
     <p>Playback keeps going with the screen locked, and the lock screen shows play, pause and skip controls. Your place in each lecture is saved on this device.</p>
   </details>
+</div>
+
+<div class="viewer" id="viewer" hidden role="dialog" aria-modal="true" aria-label="Slide viewer">
+  <img id="viewerImg" alt="" draggable="false">
+  <div class="viewer-bar">
+    <button class="viewer-reset" id="viewerReset" type="button" hidden aria-label="Reset zoom and go back to the slide being discussed">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 12a8 8 0 1 0 2.4-5.7"/><path d="M4 4v4h4"/></svg>Reset
+    </button>
+    <button class="viewer-close" id="viewerClose" type="button" aria-label="Close">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg>
+    </button>
+  </div>
+  <span class="viewer-n" id="viewerN"></span>
 </div>
 
 <audio id="audio" preload="metadata" playsinline></audio>
@@ -421,20 +456,28 @@ details.help summary { font-weight: 600; cursor: pointer; }
     while (lo <= hi) { var m = (lo + hi) >> 1; if (cues[m].s <= t) { k = m; lo = m + 1; } else hi = m - 1; }
     return k >= 0 && t <= cues[k].e + 2 ? cues[k].x : '';
   }
+  /* Slides follow playback until the user swipes to another one (browse); Reset or swiping back to the live slide resumes following.
+     The thumbnail token is only 480 px wide, so images use the 1920 px original, scaled down by Cloudinary for the board. */
+  var browse = null;
+  var viewer = $('#viewer'), vImg = $('#viewerImg'), vIndex = -1, vz = { s: 1, x: 0, y: 0 };
+  function slideUrl(s, w) { return CLD + 'f_auto,q_auto' + (w ? ',w_' + w : '') + '/user-files/' + s.full; }
+  function liveSlide(x, pos) { var i = 0; while (i + 1 < x.slides.length && x.slides[i + 1].t <= pos) i++; return i; }
   function paintExtras(pos) {
     var x = curExtras(); if (!x) return;
     var img = $('#slideImg');
-    if (img && x.slides.length) {
-      var i = 0; while (i + 1 < x.slides.length && x.slides[i + 1].t <= pos) i++;
-      if (img.getAttribute('data-i') !== String(i)) {
-        var s = x.slides[i];
+    if (x.slides.length) {
+      var live = liveSlide(x, pos), i = browse === null ? live : browse;
+      if (img && img.getAttribute('data-i') !== String(i)) {
         img.setAttribute('data-i', i);
-        img.src = CLD + 'f_auto,q_auto,w_960/user-files/' + s.img;
+        img.src = slideUrl(x.slides[i], 960);
         img.alt = 'Slide ' + (i + 1) + ' of ' + x.slides.length;
         $('#slideN').textContent = (i + 1) + ' / ' + x.slides.length;
-        $('#slideLink').href = CLD + 'f_auto,q_auto/user-files/' + s.full;
-        if (x.slides[i + 1]) new Image().src = CLD + 'f_auto,q_auto,w_960/user-files/' + x.slides[i + 1].img;
+        if (x.slides[i + 1]) new Image().src = slideUrl(x.slides[i + 1], 960);
       }
+      var r = $('#slideReset'); if (r) r.hidden = browse === null;
+      /* While following playback, a zoomed-in viewer holds its slide so it doesn't change under the user's fingers */
+      if (!viewer.hidden && vIndex !== i && (browse !== null || vz.s === 1)) showInViewer(i);
+      if (!viewer.hidden) $('#viewerReset').hidden = browse === null && vz.s === 1 && vIndex === live;
     }
     var c = $('#ccLine');
     if (c) {
@@ -442,6 +485,141 @@ details.help summary { font-weight: 600; cursor: pointer; }
       if (c.textContent !== t) c.textContent = t;
     }
   }
+  function stepSlide(d) {
+    var x = curExtras(); if (!x || !x.slides.length) return false;
+    var img = $('#slideImg'), from = viewer.hidden ? +(img && img.getAttribute('data-i')) || 0 : vIndex;
+    var i = Math.max(0, Math.min(x.slides.length - 1, from + d));
+    if (i === from) return false;
+    browse = i === liveSlide(x, nowPos()) ? null : i;
+    if (!viewer.hidden) showInViewer(i);
+    paintExtras(nowPos());
+    return true;
+  }
+  function resetSlides() {
+    var x = curExtras(); browse = null;
+    if (!viewer.hidden && x && x.slides.length) showInViewer(liveSlide(x, nowPos()));
+    paintExtras(nowPos());
+  }
+  /* Board slide: tap opens the viewer, a horizontal swipe changes slide (vertical drags still scroll the page) */
+  function boardSlide(btn) {
+    var start = null, swiped = false;
+    btn.onpointerdown = function (e) { start = { x: e.clientX, y: e.clientY, id: e.pointerId }; swiped = false; };
+    btn.onpointerup = function (e) {
+      if (!start || e.pointerId !== start.id) return;
+      var dx = e.clientX - start.x, dy = e.clientY - start.y; start = null;
+      if (Math.abs(dx) > 40 && Math.abs(dx) > 1.5 * Math.abs(dy)) { swiped = true; stepSlide(dx < 0 ? 1 : -1); }
+    };
+    btn.onpointercancel = function () { start = null; };
+    btn.onclick = function () { if (swiped) { swiped = false; return; } openViewer(); };
+    $('#slideReset').onclick = resetSlides;
+  }
+
+  /* Full-screen viewer: pinch, double-tap or scroll to zoom, drag to pan when zoomed, swipe to change slide, tap or × to close */
+  var pts = new Map(), gesture = null, lastTap = null, tapTimer = null;
+  function vApply(animate) {
+    var W = viewer.clientWidth, H = viewer.clientHeight;
+    vz.x = Math.min(0, Math.max(W - W * vz.s, vz.x));
+    vz.y = Math.min(0, Math.max(H - H * vz.s, vz.y));
+    vImg.style.transition = animate ? 'transform 0.2s ease' : 'none';
+    vImg.style.transform = 'translate(' + vz.x + 'px,' + vz.y + 'px) scale(' + vz.s + ')';
+    paintExtras(nowPos());
+  }
+  function vZoomAt(px, py, s, animate) {
+    s = Math.min(6, Math.max(1, s));
+    var k = s / vz.s;
+    vz.x = px - (px - vz.x) * k; vz.y = py - (py - vz.y) * k; vz.s = s;
+    vApply(animate);
+  }
+  function showInViewer(i) {
+    var x = curExtras(), s = x && x.slides[i]; if (!s) return;
+    vIndex = i; vz = { s: 1, x: 0, y: 0 };
+    var hi = slideUrl(s);
+    vImg.src = slideUrl(s, 960); vImg.alt = 'Slide ' + (i + 1) + ' of ' + x.slides.length;
+    vImg.setAttribute('data-hi', hi);
+    var big = new Image(); big.onload = function () { if (vImg.getAttribute('data-hi') === hi) vImg.src = hi; }; big.src = hi;
+    $('#viewerN').textContent = (i + 1) + ' / ' + x.slides.length;
+    [i - 1, i + 1].forEach(function (j) { if (x.slides[j]) new Image().src = slideUrl(x.slides[j], 960); });
+    vApply(false);
+  }
+  function openViewer() {
+    var img = $('#slideImg'); if (!img) return;
+    viewer.hidden = false; document.documentElement.style.overflow = 'hidden';
+    showInViewer(+img.getAttribute('data-i') || 0);
+    $('#viewerClose').focus();
+  }
+  function closeViewer() {
+    if (viewer.hidden) return;
+    viewer.hidden = true; document.documentElement.style.overflow = '';
+    pts.clear(); gesture = null; clearTimeout(tapTimer); vIndex = -1;
+    var b = $('#slideBtn'); if (b) b.focus({ preventScroll: true });
+  }
+  function rel(e) { var r = viewer.getBoundingClientRect(); return { x: e.clientX - r.left, y: e.clientY - r.top }; }
+  function dist(a, b) { return Math.hypot(a.x - b.x, a.y - b.y) || 1; }
+  function mid(a, b) { return { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 }; }
+  function startGesture() {
+    var p = Array.from(pts.values());
+    gesture = p.length >= 2 ? { pinch: true, d: dist(p[0], p[1]), m: mid(p[0], p[1]), s: vz.s, x: vz.x, y: vz.y }
+      : p.length === 1 ? { pinch: false, p: p[0], x: vz.x, y: vz.y, moved: false, t: Date.now() } : null;
+  }
+  function tap(at) {
+    var now = Date.now();
+    if (lastTap && now - lastTap.t < 300 && Math.abs(at.x - lastTap.x) + Math.abs(at.y - lastTap.y) < 40) {
+      clearTimeout(tapTimer); lastTap = null;
+      if (vz.s > 1) { vz = { s: 1, x: 0, y: 0 }; vApply(true); } else vZoomAt(at.x, at.y, 2.5, true);
+      return;
+    }
+    lastTap = { t: now, x: at.x, y: at.y };
+    clearTimeout(tapTimer);
+    tapTimer = setTimeout(function () { lastTap = null; if (vz.s === 1) closeViewer(); }, 300);
+  }
+  viewer.addEventListener('pointerdown', function (e) {
+    if (e.target.closest('button')) return;
+    try { viewer.setPointerCapture(e.pointerId); } catch (err) {}
+    pts.set(e.pointerId, rel(e)); startGesture();
+  });
+  viewer.addEventListener('pointermove', function (e) {
+    if (!pts.has(e.pointerId) || !gesture) return;
+    pts.set(e.pointerId, rel(e));
+    var p = Array.from(pts.values()), g = gesture;
+    if (g.pinch && p.length >= 2) {
+      var s = Math.min(6, Math.max(1, g.s * dist(p[0], p[1]) / g.d)), m = mid(p[0], p[1]), k = s / g.s;
+      vz.s = s; vz.x = m.x - (g.m.x - g.x) * k; vz.y = m.y - (g.m.y - g.y) * k;
+      vApply(false);
+    } else if (!g.pinch) {
+      var dx = p[0].x - g.p.x, dy = p[0].y - g.p.y;
+      if (Math.abs(dx) + Math.abs(dy) > 8) g.moved = true;
+      if (vz.s > 1) { vz.x = g.x + dx; vz.y = g.y + dy; vApply(false); }
+      else { vImg.style.transition = 'none'; vImg.style.transform = 'translateX(' + dx + 'px)'; }
+    }
+  });
+  function endPointer(e) {
+    if (!pts.has(e.pointerId)) return;
+    var g = gesture, at = pts.get(e.pointerId);
+    pts.delete(e.pointerId);
+    if (g && !g.pinch && pts.size === 0) {
+      var dx = at.x - g.p.x, dy = at.y - g.p.y;
+      if (!g.moved && e.type === 'pointerup' && Date.now() - g.t < 400) tap(at);
+      else if (vz.s === 1 && !(Math.abs(dx) > 60 && Math.abs(dx) > Math.abs(dy) && stepSlide(dx < 0 ? 1 : -1))) vApply(true);
+    }
+    startGesture();
+    if (gesture) gesture.moved = true;
+  }
+  viewer.addEventListener('pointerup', endPointer);
+  viewer.addEventListener('pointercancel', endPointer);
+  viewer.addEventListener('wheel', function (e) {
+    e.preventDefault();
+    var p = rel(e); vZoomAt(p.x, p.y, vz.s * Math.exp(-e.deltaY * (e.ctrlKey ? 0.01 : 0.002)), false);
+  }, { passive: false });
+  viewer.addEventListener('gesturestart', function (e) { e.preventDefault(); });
+  $('#viewerClose').onclick = closeViewer;
+  $('#viewerReset').onclick = function () { vz = { s: 1, x: 0, y: 0 }; resetSlides(); vApply(true); };
+  document.addEventListener('keydown', function (e) {
+    if (viewer.hidden) return;
+    if (e.key === 'Escape') closeViewer();
+    else if (e.key === 'ArrowRight') stepSlide(1);
+    else if (e.key === 'ArrowLeft') stepSlide(-1);
+  });
+  window.addEventListener('resize', function () { if (!viewer.hidden) { vz = { s: 1, x: 0, y: 0 }; vApply(false); } });
 
   /* Saved files (IndexedDB) */
   var dbp = null;
@@ -493,7 +671,9 @@ details.help summary { font-weight: 600; cursor: pointer; }
     var dur = audio.duration && isFinite(audio.duration) ? audio.duration : (l.duration || 0);
     var pos = audio.src ? audio.currentTime : (l.position || 0);
     var x = l.file ? extras.get(l.file) : null;
-    var slide = x && x.slides.length ? '<a class="slide-wrap" id="slideLink" target="_blank" rel="noopener"><img class="slide" id="slideImg" alt=""><span class="slide-n" id="slideN"></span></a>' : '';
+    var slide = x && x.slides.length ? '<div class="slide-box">' +
+      '<button class="slide-wrap" id="slideBtn" type="button" aria-label="Enlarge slide"><img class="slide" id="slideImg" alt="" draggable="false"><span class="slide-n" id="slideN"></span></button>' +
+      '<button class="slide-reset" id="slideReset" type="button" hidden aria-label="Back to the slide being discussed">' + I.back + 'Reset</button></div>' : '';
     var ccBtn = x && x.tracks.length && CAPTIONS_PROXY ? '<button class="chip" id="bCC" type="button" aria-pressed="' + !!ccTrack + '" aria-label="Captions">' + ccLabel() + '</button>' : '';
     b.innerHTML =
       '<div><span class="label">Now playing</span>' +
@@ -512,6 +692,7 @@ details.help summary { font-weight: 600; cursor: pointer; }
       '<span class="chips">' + ccBtn + '<button class="chip" id="bRate" type="button" aria-label="Playback speed">' + rate + '×</button></span></div>';
     paintSeek();
     paintExtras(pos);
+    if (slide) boardSlide($('#slideBtn'));
     if (ccBtn) $('#bCC').onclick = cycleCC;
     $('#bPlay').onclick = toggle;
     $('#bBack').onclick = function () { skip(-BACK); };
@@ -615,6 +796,7 @@ details.help summary { font-weight: 600; cursor: pointer; }
     audio.src = src;
     audio.defaultPlaybackRate = rate; audio.playbackRate = rate;
     setMeta(l);
+    browse = null; closeViewer();
     loadExtras(l); pickTrack();
     render();
     if (autoplay) play();
