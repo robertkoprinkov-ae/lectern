@@ -93,6 +93,12 @@ input[type=range]::-moz-range-thumb { width: 16px; height: 16px; border-radius: 
 .np-foot { display: flex; justify-content: space-between; align-items: center; gap: 10px; }
 .chip { border: 1px solid color-mix(in srgb, var(--on-board) 30%, transparent); background: none; color: var(--on-board); border-radius: 999px; padding: 5px 12px; font-family: var(--font-mono); font-size: 0.8rem; min-height: 34px; }
 .msg { font-size: 0.86rem; color: var(--chalk); margin: 0; }
+.chips { display: flex; gap: 8px; flex-shrink: 0; }
+.chip[aria-pressed="true"] { background: var(--chalk); color: #1C1606; border-color: transparent; }
+.slide-wrap { position: relative; display: block; border-radius: 10px; overflow: hidden; background: #0F1F19; aspect-ratio: 16 / 9; }
+.slide { display: block; width: 100%; height: 100%; object-fit: contain; }
+.slide-n { position: absolute; right: 8px; bottom: 8px; font-family: var(--font-mono); font-size: 0.7rem; color: #fff; background: rgba(0, 0, 0, 0.55); padding: 2px 6px; border-radius: 5px; }
+.cc-line { margin: 0; min-height: 4.4em; font-size: 0.98rem; line-height: 1.45; color: var(--on-board); overflow-wrap: anywhere; }
 .empty-board p { margin: 6px 0 0; color: var(--on-board-muted); }
 
 /* Queue */
@@ -212,6 +218,7 @@ details.help summary { font-weight: 600; cursor: pointer; }
       <li>Right-click it › Copy Link. Paste it into “Recording link” here; Universal Clipboard carries it to your iPhone.</li>
     </ol>
     <p>If the recording can be downloaded, save it to iCloud Drive and use “Choose a saved file” instead. Files are kept on this iPhone, so they also play offline.</p>
+    <p>For Cassyni lectures the board shows the slide being discussed (tap it to open it full size), and the CC button shows captions when Cassyni has them.</p>
     <p>Playback keeps going with the screen locked, and the lock screen shows play, pause and skip controls. Your place in each lecture is saved on this device.</p>
   </details>
 </div>
@@ -222,7 +229,7 @@ details.help summary { font-weight: 600; cursor: pointer; }
 (function () {
   var $ = function (s) { return document.querySelector(s); };
   var audio = $('#audio');
-  var KEY_Q = 'lectern.queue', KEY_CUR = 'lectern.current', KEY_RATE = 'lectern.rate';
+  var KEY_Q = 'lectern.queue', KEY_CUR = 'lectern.current', KEY_RATE = 'lectern.rate', KEY_CC = 'lectern.cc';
   var RATES = [0.8, 1, 1.25, 1.5, 1.75, 2];
   var BACK = 15, FWD = 30;
 
@@ -345,6 +352,97 @@ details.help summary { font-weight: 600; cursor: pointer; }
     }, Promise.resolve());
   }
 
+  /* Slides and captions. /videos/{file} lists both. Slide images come from Cassyni's Cloudinary, which any site may load.
+     Caption files sit in an S3 bucket that only cassyni.com may read, so they go through the small Worker in captions-worker.js;
+     CC stays hidden until CAPTIONS_PROXY is set to that Worker's address. */
+  var CAPTIONS_PROXY = '';
+  var CLD = 'https://res.cloudinary.com/cassyni/image/upload/';
+  var extras = new Map(), ccPref = sget(KEY_CC, ''), ccTrack = null;
+  function curExtras() { var l = byId(currentId); return l && l.file ? extras.get(l.file) : null; }
+  function nowPos() { var l = byId(currentId); return audio.src ? audio.currentTime : (l && l.position) || 0; }
+  function loadExtras(l) {
+    if (!l || !l.file || extras.has(l.file)) return;
+    var x = { slides: [], tracks: [], cues: {} };
+    extras.set(l.file, x);
+    getJSON(CASSYNI_API + '/videos/' + encodeURIComponent(l.file)).then(function (d) {
+      x.slides = (d.slides || []).filter(function (s) { return typeof s.time === 'number' && s.thumbnail_token; })
+        .sort(function (a, b) { return a.time - b.time; })
+        .map(function (s) { return { t: s.time, img: s.thumbnail_token, full: s.original_token || s.thumbnail_token }; });
+      x.tracks = (d.captions || []).filter(function (c) { return c.captions_file_token; })
+        .map(function (c) { return { file: c.captions_file_token, lang: c.src_lang || '', def: !!c.is_default }; })
+        .sort(function (a, b) { return b.def - a.def; });
+      if (byId(currentId) === l) { pickTrack(); renderBoard(); }
+    }).catch(function () { extras.delete(l.file); });
+  }
+  function pickTrack() {
+    var x = curExtras(); ccTrack = null;
+    if (!x || !ccPref || !CAPTIONS_PROXY) return;
+    ccTrack = x.tracks.filter(function (t) { return t.lang === ccPref; })[0] || x.tracks[0] || null;
+    if (ccTrack) loadCues(x, ccTrack);
+  }
+  function loadCues(x, t) {
+    if (x.cues[t.file]) return;
+    x.cues[t.file] = [];
+    fetch(CAPTIONS_PROXY + '/captions/' + t.file).then(function (r) {
+      if (!r.ok) throw new Error('HTTP ' + r.status);
+      return r.text();
+    }).then(function (txt) { x.cues[t.file] = parseVTT(txt); paintExtras(nowPos()); }, function () {
+      delete x.cues[t.file];
+      if (ccTrack === t) setMessage('Captions could not be loaded right now.');
+    });
+  }
+  function cycleCC() {
+    var x = curExtras(); if (!x || !x.tracks.length) return;
+    ccTrack = x.tracks[(ccTrack ? x.tracks.indexOf(ccTrack) : -1) + 1] || null;
+    ccPref = ccTrack ? ccTrack.lang || 'on' : ''; sset(KEY_CC, ccPref);
+    if (ccTrack) loadCues(x, ccTrack);
+    renderBoard();
+  }
+  function ccLabel() { return ccTrack ? 'CC ' + ccTrack.lang.toUpperCase() : 'CC'; }
+  function vttTime(s) {
+    var p = s.split(':').map(parseFloat);
+    return p.length === 3 ? p[0] * 3600 + p[1] * 60 + p[2] : p[0] * 60 + p[1];
+  }
+  function parseVTT(text) {
+    var cues = [];
+    String(text).replace(/\r/g, '').split(/\n\n+/).forEach(function (b) {
+      var lines = b.split('\n'), i = lines.findIndex(function (x) { return x.indexOf('-->') >= 0; });
+      var m = i >= 0 && lines[i].match(/([\d:.]+)\s*-->\s*([\d:.]+)/);
+      if (!m) return;
+      var t = lines.slice(i + 1).join(' ').replace(/<[^>]*>/g, '')
+        .replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&nbsp;/g, ' ').replace(/&amp;/g, '&').trim();
+      if (t) cues.push({ s: vttTime(m[1]), e: vttTime(m[2]), x: t });
+    });
+    return cues.sort(function (a, b) { return a.s - b.s; });
+  }
+  /* The cue playing at t, held for 2 s after it ends so short pauses don't blank the line */
+  function cueAt(cues, t) {
+    var lo = 0, hi = cues.length - 1, k = -1;
+    while (lo <= hi) { var m = (lo + hi) >> 1; if (cues[m].s <= t) { k = m; lo = m + 1; } else hi = m - 1; }
+    return k >= 0 && t <= cues[k].e + 2 ? cues[k].x : '';
+  }
+  function paintExtras(pos) {
+    var x = curExtras(); if (!x) return;
+    var img = $('#slideImg');
+    if (img && x.slides.length) {
+      var i = 0; while (i + 1 < x.slides.length && x.slides[i + 1].t <= pos) i++;
+      if (img.getAttribute('data-i') !== String(i)) {
+        var s = x.slides[i];
+        img.setAttribute('data-i', i);
+        img.src = CLD + 'f_auto,q_auto,w_960/user-files/' + s.img;
+        img.alt = 'Slide ' + (i + 1) + ' of ' + x.slides.length;
+        $('#slideN').textContent = (i + 1) + ' / ' + x.slides.length;
+        $('#slideLink').href = CLD + 'f_auto,q_auto/user-files/' + s.full;
+        if (x.slides[i + 1]) new Image().src = CLD + 'f_auto,q_auto,w_960/user-files/' + x.slides[i + 1].img;
+      }
+    }
+    var c = $('#ccLine');
+    if (c) {
+      var cues = ccTrack && x.cues[ccTrack.file], t = cues ? cueAt(cues, pos) : '';
+      if (c.textContent !== t) c.textContent = t;
+    }
+  }
+
   /* Saved files (IndexedDB) */
   var dbp = null;
   function db() {
@@ -394,11 +492,15 @@ details.help summary { font-weight: 600; cursor: pointer; }
     var playing = !audio.paused && !audio.ended;
     var dur = audio.duration && isFinite(audio.duration) ? audio.duration : (l.duration || 0);
     var pos = audio.src ? audio.currentTime : (l.position || 0);
+    var x = l.file ? extras.get(l.file) : null;
+    var slide = x && x.slides.length ? '<a class="slide-wrap" id="slideLink" target="_blank" rel="noopener"><img class="slide" id="slideImg" alt=""><span class="slide-n" id="slideN"></span></a>' : '';
+    var ccBtn = x && x.tracks.length && CAPTIONS_PROXY ? '<button class="chip" id="bCC" type="button" aria-pressed="' + !!ccTrack + '" aria-label="Captions">' + ccLabel() + '</button>' : '';
     b.innerHTML =
       '<div><span class="label">Now playing</span>' +
       '<p class="np-title">' + esc(l.title) + '</p>' +
       '<div class="np-sub">' + esc(l.speaker || (l.kind === 'file' ? 'Saved file' : '')) +
       (href ? (l.speaker ? ' · ' : '') + '<a href="' + esc(href) + '" target="_blank" rel="noopener">Lecture page</a>' : '') + '</div></div>' +
+      slide + (ccTrack ? '<p class="cc-line" id="ccLine"></p>' : '') +
       '<div class="scrub"><input type="range" id="seek" min="0" max="' + (dur || 1) + '" step="1" value="' + pos + '" aria-label="Position in lecture">' +
       '<div class="times"><span id="tNow">' + fmt(pos) + '</span><span id="tLeft">−' + fmt(Math.max(0, dur - pos)) + '</span></div></div>' +
       '<div class="transport">' +
@@ -407,14 +509,16 @@ details.help summary { font-weight: 600; cursor: pointer; }
       '<button class="tbtn" id="bFwd" type="button" aria-label="Forward ' + FWD + ' seconds">' + I.fwd + '<span>' + FWD + '</span></button>' +
       '</div>' +
       '<div class="np-foot"><p class="msg" id="msg">' + esc(message) + '</p>' +
-      '<button class="chip" id="bRate" type="button" aria-label="Playback speed">' + rate + '×</button></div>';
+      '<span class="chips">' + ccBtn + '<button class="chip" id="bRate" type="button" aria-label="Playback speed">' + rate + '×</button></span></div>';
     paintSeek();
+    paintExtras(pos);
+    if (ccBtn) $('#bCC').onclick = cycleCC;
     $('#bPlay').onclick = toggle;
     $('#bBack').onclick = function () { skip(-BACK); };
     $('#bFwd').onclick = function () { skip(FWD); };
     $('#bRate').onclick = cycleRate;
     var s = $('#seek');
-    s.oninput = function () { scrubbing = true; updateTimes(+s.value); paintSeek(); };
+    s.oninput = function () { scrubbing = true; updateTimes(+s.value); paintSeek(); paintExtras(+s.value); };
     s.onchange = function () { scrubbing = false; if (audio.src) { audio.currentTime = +s.value; } else { l.position = +s.value; save(); } };
   }
   function paintSeek() {
@@ -511,6 +615,7 @@ details.help summary { font-weight: 600; cursor: pointer; }
     audio.src = src;
     audio.defaultPlaybackRate = rate; audio.playbackRate = rate;
     setMeta(l);
+    loadExtras(l); pickTrack();
     render();
     if (autoplay) play();
   }
@@ -561,6 +666,7 @@ details.help summary { font-weight: 600; cursor: pointer; }
       var s = $('#seek');
       if (s) { s.value = audio.currentTime; paintSeek(); }
       updateTimes(audio.currentTime);
+      paintExtras(audio.currentTime);
     }
     var now = Date.now();
     if (now - lastSave > 5000) { lastSave = now; persistPosition(); renderQueue(); }
