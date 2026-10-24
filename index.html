@@ -1,0 +1,732 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<meta name="apple-mobile-web-app-title" content="Lectern">
+<meta name="theme-color" content="#1E3D32">
+<style>:root{padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}body{margin:0}[hidden]{display:none!important}</style>
+<title>Lectern</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Literata:opsz,wght@7..72,500;7..72,600&family=Schibsted+Grotesk:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap">
+<style>
+/* Layout: single column player. "Now playing" board at the top, the lecture queue below, an add-lecture panel that opens in place. Chalkboard green and chalk yellow from the lecture hall. */
+:root {
+  --bg: #EDF1EE;
+  --surface: #F9FBF9;
+  --board: #1E3D32;
+  --on-board: #EEF3EE;
+  --on-board-muted: #A9C0B4;
+  --ink: #16231E;
+  --muted: #586A62;
+  --line: #D2DBD5;
+  --accent: #1F5C46;
+  --on-accent: #FFFFFF;
+  --chalk: #E9C75E;
+  --danger: #A33A2A;
+  --font-display: "Literata", Georgia, "Times New Roman", serif;
+  --font-ui: "Schibsted Grotesk", -apple-system, "Segoe UI", Roboto, sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, Menlo, Consolas, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #101814; --surface: #17211D; --board: #1C3329; --on-board: #EAF0EA; --on-board-muted: #98B2A5;
+    --ink: #E6ECE7; --muted: #92A39B; --line: #2A3832; --accent: #E9C75E; --on-accent: #1C1606;
+    --chalk: #E9C75E; --danger: #E88A78; color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #101814; --surface: #17211D; --board: #1C3329; --on-board: #EAF0EA; --on-board-muted: #98B2A5;
+  --ink: #E6ECE7; --muted: #92A39B; --line: #2A3832; --accent: #E9C75E; --on-accent: #1C1606;
+  --chalk: #E9C75E; --danger: #E88A78; color-scheme: dark;
+}
+* { box-sizing: border-box; }
+body {
+  background: var(--bg); color: var(--ink); font-family: var(--font-ui); font-size: 16px; line-height: 1.45;
+  padding-left: max(16px, env(safe-area-inset-left, 0px));
+  padding-right: max(16px, env(safe-area-inset-right, 0px));
+  padding-block: 12px 40px;
+  -webkit-text-size-adjust: 100%;
+}
+.wrap { max-width: 560px; margin: 0 auto; display: flex; flex-direction: column; gap: 22px; }
+header { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; }
+.brand { font-family: var(--font-display); font-weight: 600; font-size: 1.5rem; letter-spacing: -0.01em; margin: 0; }
+.brand small { display: block; font-family: var(--font-ui); font-weight: 400; font-size: 0.8rem; color: var(--muted); letter-spacing: 0; }
+button { font: inherit; color: inherit; cursor: pointer; -webkit-tap-highlight-color: transparent; }
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.btn {
+  border: 1px solid var(--line); background: var(--surface); border-radius: 10px; padding: 9px 14px; font-weight: 500;
+  display: inline-flex; align-items: center; gap: 6px; min-height: 40px;
+}
+.btn.primary { background: var(--accent); color: var(--on-accent); border-color: transparent; }
+.label { font-size: 0.72rem; letter-spacing: 0.09em; text-transform: uppercase; font-weight: 600; color: var(--muted); }
+
+/* Now playing board */
+.board {
+  background: var(--board); color: var(--on-board); border-radius: 18px; padding: 20px 18px 18px;
+  display: flex; flex-direction: column; gap: 16px;
+}
+.board .label { color: var(--chalk); }
+.np-title { font-family: var(--font-display); font-weight: 500; font-size: 1.35rem; line-height: 1.25; margin: 4px 0 0; text-wrap: balance; overflow-wrap: anywhere; }
+.np-sub { color: var(--on-board-muted); font-size: 0.92rem; margin-top: 4px; overflow-wrap: anywhere; }
+.np-sub a { color: var(--on-board-muted); }
+.scrub { display: flex; flex-direction: column; gap: 6px; }
+input[type=range] { -webkit-appearance: none; appearance: none; width: 100%; height: 28px; background: transparent; margin: 0; }
+input[type=range]::-webkit-slider-runnable-track { height: 4px; border-radius: 2px; background: linear-gradient(to right, var(--chalk) var(--p, 0%), color-mix(in srgb, var(--on-board) 22%, transparent) var(--p, 0%)); }
+input[type=range]::-webkit-slider-thumb { -webkit-appearance: none; width: 16px; height: 16px; border-radius: 50%; background: var(--chalk); margin-top: -6px; border: 0; }
+input[type=range]::-moz-range-track { height: 4px; border-radius: 2px; background: color-mix(in srgb, var(--on-board) 22%, transparent); }
+input[type=range]::-moz-range-progress { height: 4px; border-radius: 2px; background: var(--chalk); }
+input[type=range]::-moz-range-thumb { width: 16px; height: 16px; border-radius: 50%; background: var(--chalk); border: 0; }
+.times { display: flex; justify-content: space-between; font-family: var(--font-mono); font-size: 0.78rem; color: var(--on-board-muted); font-variant-numeric: tabular-nums; }
+.transport { display: flex; align-items: center; justify-content: center; gap: 22px; }
+.tbtn { background: none; border: 0; color: var(--on-board); display: grid; place-items: center; width: 52px; height: 52px; border-radius: 50%; position: relative; }
+.tbtn svg { width: 30px; height: 30px; }
+.tbtn span { position: absolute; font-family: var(--font-mono); font-size: 0.6rem; font-weight: 500; top: 19px; }
+.play { width: 68px; height: 68px; background: var(--chalk); color: #1C1606; }
+.play svg { width: 30px; height: 30px; }
+.tbtn:disabled { opacity: 0.35; cursor: default; }
+.np-foot { display: flex; justify-content: space-between; align-items: center; gap: 10px; }
+.chip { border: 1px solid color-mix(in srgb, var(--on-board) 30%, transparent); background: none; color: var(--on-board); border-radius: 999px; padding: 5px 12px; font-family: var(--font-mono); font-size: 0.8rem; min-height: 34px; }
+.msg { font-size: 0.86rem; color: var(--chalk); margin: 0; }
+.empty-board p { margin: 6px 0 0; color: var(--on-board-muted); }
+
+/* Queue */
+.qhead { display: flex; justify-content: space-between; align-items: center; gap: 10px; }
+.qhead h2 { font-family: var(--font-display); font-weight: 600; font-size: 1.15rem; margin: 0; }
+ol.queue { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; border-top: 1px solid var(--line); }
+.item { display: grid; grid-template-columns: 1fr auto; gap: 10px; padding: 14px 0; border-bottom: 1px solid var(--line); align-items: center; }
+.item-main { background: none; border: 0; padding: 0; text-align: left; min-width: 0; display: flex; flex-direction: column; gap: 4px; }
+.item-title { font-family: var(--font-display); font-weight: 500; font-size: 1.02rem; line-height: 1.3; overflow-wrap: anywhere; }
+.item.current .item-title { color: var(--accent); }
+.item.done .item-title { color: var(--muted); }
+.item-meta { font-size: 0.84rem; color: var(--muted); display: flex; flex-wrap: wrap; gap: 4px 10px; align-items: center; overflow-wrap: anywhere; }
+.pill { font-size: 0.7rem; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; padding: 2px 7px; border-radius: 5px; border: 1px solid var(--line); color: var(--muted); }
+.pill.now { background: var(--accent); color: var(--on-accent); border-color: transparent; }
+.bar { height: 3px; border-radius: 2px; background: var(--line); overflow: hidden; margin-top: 4px; }
+.bar i { display: block; height: 100%; background: var(--accent); }
+.mono { font-family: var(--font-mono); font-size: 0.78rem; font-variant-numeric: tabular-nums; }
+.item-actions { display: flex; gap: 4px; }
+.ibtn { width: 38px; height: 38px; border-radius: 9px; border: 1px solid var(--line); background: var(--surface); display: grid; place-items: center; color: var(--muted); }
+.ibtn svg { width: 18px; height: 18px; }
+.ibtn.confirm { width: auto; padding: 0 10px; color: var(--danger); border-color: var(--danger); font-size: 0.82rem; font-weight: 600; }
+.qempty { padding: 18px 0; color: var(--muted); border-bottom: 1px solid var(--line); margin: 0; }
+
+/* Add panel */
+.panel { background: var(--surface); border: 1px solid var(--line); border-radius: 16px; padding: 18px; display: flex; flex-direction: column; gap: 14px; }
+.panel h2 { font-family: var(--font-display); font-weight: 600; font-size: 1.15rem; margin: 0; }
+.field { display: flex; flex-direction: column; gap: 6px; }
+.field label { font-size: 0.86rem; font-weight: 500; }
+.field .hint { font-size: 0.8rem; color: var(--muted); }
+.field input[type=text], .field input[type=url] {
+  font: inherit; font-size: 16px; padding: 10px 12px; border-radius: 10px; border: 1px solid var(--line); background: var(--bg); color: var(--ink); width: 100%; min-width: 0;
+}
+.or { display: flex; align-items: center; gap: 10px; color: var(--muted); font-size: 0.8rem; }
+.or::before, .or::after { content: ""; flex: 1; height: 1px; background: var(--line); }
+.filepick { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; }
+.filepick input { position: absolute; width: 1px; height: 1px; opacity: 0; }
+.filename { font-size: 0.86rem; color: var(--muted); overflow-wrap: anywhere; min-width: 0; }
+.row { display: flex; gap: 10px; justify-content: flex-end; flex-wrap: wrap; }
+.err { color: var(--danger); font-size: 0.86rem; margin: 0; }
+
+/* Help */
+details.help { border-top: 1px solid var(--line); padding-top: 14px; }
+details.help summary { font-weight: 600; cursor: pointer; }
+.help ol { padding-left: 20px; margin: 10px 0 0; display: flex; flex-direction: column; gap: 6px; color: var(--muted); font-size: 0.92rem; max-width: 62ch; }
+.help p { color: var(--muted); font-size: 0.92rem; max-width: 62ch; }
+.help code { font-family: var(--font-mono); font-size: 0.82rem; color: var(--ink); }
+@media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
+</style>
+
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1 class="brand">Lectern<small>Cassyni lectures as audio</small></h1>
+    <button class="btn primary" id="openAdd" type="button">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>Add
+    </button>
+  </header>
+
+  <section class="panel" id="addPanel" hidden aria-labelledby="addTitle">
+    <h2 id="addTitle">Add a lecture</h2>
+    <form id="addForm" novalidate>
+      <div style="display:flex;flex-direction:column;gap:14px">
+        <div class="field">
+          <label for="fUrl">Cassyni link</label>
+          <input type="url" id="fUrl" autocomplete="off" inputmode="url" placeholder="https://cassyni.com/events/…">
+          <span class="hint" id="fUrlHint">Paste the lecture’s Cassyni address or DOI and Lectern finds the recording. A direct .mp4 or .m3u8 link works too.</span>
+        </div>
+        <div class="or">or</div>
+        <div class="field">
+          <span class="filepick">
+            <label class="btn" for="fFile">Choose a saved file</label>
+            <input type="file" id="fFile" accept="audio/*,video/*,.m4a,.mp3,.mp4,.mov,.m4v,.aac,.wav">
+            <span class="filename" id="fFileName">Audio or video from the Files app</span>
+          </span>
+        </div>
+        <div class="field">
+          <label for="fTitle">Title</label>
+          <input type="text" id="fTitle" autocomplete="off" placeholder="e.g. Coral reef resilience under warming seas">
+        </div>
+        <div class="field">
+          <label for="fSpeaker">Speaker <span class="hint">(optional)</span></label>
+          <input type="text" id="fSpeaker" autocomplete="off" placeholder="e.g. Dr. Ana Ruiz, University of Exeter">
+        </div>
+        <div class="field">
+          <label for="fPage">Cassyni page or DOI <span class="hint">(optional)</span></label>
+          <input type="text" id="fPage" autocomplete="off" placeholder="https://cassyni.com/events/… or 10.52843/…">
+        </div>
+        <p class="err" id="fErr" hidden></p>
+        <div class="row">
+          <button class="btn" type="button" id="cancelAdd">Cancel</button>
+          <button class="btn primary" type="submit">Add to queue</button>
+        </div>
+      </div>
+    </form>
+  </section>
+
+  <section class="board" id="board" aria-label="Now playing"></section>
+
+  <section style="display:flex;flex-direction:column;gap:10px" aria-labelledby="qTitle">
+    <div class="qhead">
+      <h2 id="qTitle">Queue</h2>
+      <span class="label" id="qCount"></span>
+    </div>
+    <ol class="queue" id="queue"></ol>
+  </section>
+
+  <details class="help" id="help">
+    <summary>Finding the recording link</summary>
+    <p>For a Cassyni lecture you usually don’t need to: paste its address (Share › Copy, or the address bar) or its DOI, and Lectern looks up the recording. This works when the recording is public on Cassyni.</p>
+    <p>For a recording hosted somewhere else, or if that fails, find the address of the recording itself. Your Mac makes this quick:</p>
+    <ol>
+      <li>On the Mac, open the lecture in Safari.</li>
+      <li>Turn on Safari › Settings › Advanced › “Show features for web developers”.</li>
+      <li>Choose Develop › Show Web Inspector, then open the Network tab.</li>
+      <li>Start the video. Look for a request ending in <code>.m3u8</code> or <code>.mp4</code> (type “Media” or search for those).</li>
+      <li>Right-click it › Copy Link. Paste it into “Recording link” here; Universal Clipboard carries it to your iPhone.</li>
+    </ol>
+    <p>If the recording can be downloaded, save it to iCloud Drive and use “Choose a saved file” instead. Files are kept on this iPhone, so they also play offline.</p>
+    <p>Playback keeps going with the screen locked, and the lock screen shows play, pause and skip controls. Your place in each lecture is saved on this device.</p>
+  </details>
+</div>
+
+<audio id="audio" preload="metadata" playsinline></audio>
+
+<script>
+(function () {
+  var $ = function (s) { return document.querySelector(s); };
+  var audio = $('#audio');
+  var KEY_Q = 'lectern.queue', KEY_CUR = 'lectern.current', KEY_RATE = 'lectern.rate';
+  var RATES = [0.8, 1, 1.25, 1.5, 1.75, 2];
+  var BACK = 15, FWD = 30;
+
+  function sget(k, d) { try { var v = localStorage.getItem(k); return v ? JSON.parse(v) : d; } catch (e) { return d; } }
+  function sset(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch (e) {} }
+
+  var queue = sget(KEY_Q, []);
+  if (!Array.isArray(queue)) queue = [];
+  var currentId = sget(KEY_CUR, null);
+  var rate = sget(KEY_RATE, 1);
+  if (RATES.indexOf(rate) < 0) rate = 1;
+  var memFiles = new Map();
+  var objectUrl = null, pendingResume = 0, lastSave = 0, message = '', confirmId = null, scrubbing = false, loadSeq = 0;
+
+  function save() { sset(KEY_Q, queue); sset(KEY_CUR, currentId); }
+  function byId(id) { for (var i = 0; i < queue.length; i++) if (queue[i].id === id) return queue[i]; return null; }
+  function uid() { return Date.now().toString(36) + Math.random().toString(36).slice(2, 7); }
+  function fmt(s) {
+    if (!isFinite(s) || s < 0) s = 0; s = Math.floor(s);
+    var h = Math.floor(s / 3600), m = Math.floor(s % 3600 / 60), sec = s % 60;
+    var mm = h ? String(m).padStart(2, '0') : String(m);
+    return (h ? h + ':' : '') + mm + ':' + String(sec).padStart(2, '0');
+  }
+  function left(l) {
+    if (!l.duration) return '';
+    var m = Math.max(0, Math.round((l.duration - (l.position || 0)) / 60));
+    return m >= 60 ? Math.floor(m / 60) + ' h ' + (m % 60) + ' min left' : m + ' min left';
+  }
+  function esc(s) { return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]; }); }
+  function pageHref(p) {
+    if (!p) return '';
+    if (/^https?:\/\//i.test(p)) return p;
+    if (/^10\.\d{4,}\//.test(p)) return 'https://doi.org/' + p;
+    return '';
+  }
+
+  /* Cassyni lookup. The public API answers cross-origin requests:
+     /events/{id} gives video_file_token, /files/get-url/{token} gives a signed .mp4 link that lasts about a day.
+     So a Cassyni item keeps its file token and fetches a fresh link whenever the saved one is near expiry. */
+  var CASSYNI_API = 'https://api.cassyni.com/api';
+  var refreshing = new Map(), retryAt = {};
+  function cassyniRef(s) {
+    s = String(s || '').trim();
+    var m = s.match(/cassyni\.com\/(?:[a-z]+\/)*events\/([A-Za-z0-9]{16,})/i);
+    if (m) return { event: m[1] };
+    m = s.match(/^(?:https?:\/\/(?:dx\.)?doi\.org\/)?(10\.52843\/cassyni\.[A-Za-z0-9]+)/i);
+    if (m) return { doi: m[1] };
+    return null;
+  }
+  function cerr(m) { var e = new Error(m); e.friendly = true; return e; }
+  function cassyniError(e) {
+    if (e && e.friendly) return e;
+    if (e && e.status === 404) return cerr('Cassyni could not find that lecture. Check the link.');
+    if (e && (e.status === 401 || e.status === 403)) return cerr('This recording is not public on Cassyni, so Lectern cannot play it.');
+    if (e && e.status) return cerr('Cassyni answered with an error (' + e.status + '). Try again in a moment.');
+    return cerr('Could not reach Cassyni. Check your connection. Inside the Claude app other sites are blocked; use your hosted copy of Lectern.');
+  }
+  function getJSON(url) {
+    return fetch(url, { credentials: 'omit' }).then(function (r) {
+      if (!r.ok) { var e = new Error('HTTP ' + r.status); e.status = r.status; throw e; }
+      return r.json();
+    });
+  }
+  function cassyniUrl(file) {
+    return getJSON(CASSYNI_API + '/files/get-url/' + encodeURIComponent(file)).then(function (d) {
+      if (!d || !d.download_url) throw cerr('Cassyni did not return a recording link.');
+      var exp = +((d.download_url.match(/[?&]Expires=(\d+)/) || [])[1] || 0) * 1000;
+      return { url: d.download_url, exp: exp || Date.now() + 3600000 };
+    }).catch(function (e) { throw cassyniError(e); });
+  }
+  function cassyniSpeakers(e) {
+    var names = [], aff = '';
+    (e.talks || []).forEach(function (t) {
+      (t.speakers || []).forEach(function (s) {
+        var r = s.record || {}, n = r.name || r.full_name;
+        if (!n || names.indexOf(n) >= 0) return;
+        names.push(n);
+        if (names.length === 1 && r.affiliations && r.affiliations[0]) aff = r.affiliations[0].name || '';
+      });
+    });
+    if (names.length === 1) return names[0] + (aff ? ', ' + aff : '');
+    return names.length > 3 ? names.slice(0, 3).join(', ') + ' and others' : names.join(', ');
+  }
+  function cassyniLookup(ref) {
+    var id = ref.event ? Promise.resolve(ref.event) : getJSON('https://doi.org/api/handles/' + ref.doi).then(function (d) {
+      var v = (d.values || []).filter(function (x) { return x.type === 'URL'; })[0];
+      var r = cassyniRef(v && v.data && v.data.value);
+      if (!r || !r.event) throw cerr('That DOI does not point to a Cassyni lecture.');
+      return r.event;
+    });
+    return id.then(function (eventId) {
+      return getJSON(CASSYNI_API + '/events/' + encodeURIComponent(eventId)).then(function (d) {
+        var e = d && d.event || {};
+        if (!e.video_file_token) throw cerr('This lecture has no recording on Cassyni yet.');
+        return cassyniUrl(e.video_file_token).then(function (u) {
+          return {
+            event: eventId, file: e.video_file_token, url: u.url, exp: u.exp,
+            title: e.title || (e.talks && e.talks[0] && e.talks[0].title) || '',
+            speaker: cassyniSpeakers(e),
+            page: 'https://cassyni.com/events/' + eventId,
+            duration: e.video_file && e.video_file.meta && e.video_file.meta.duration || 0
+          };
+        });
+      });
+    }).catch(function (e) { throw cassyniError(e); });
+  }
+  function stale(l) { return !!l.cassyni && !(l.url && l.urlExp - Date.now() > 30 * 60000); }
+  function refreshUrl(l) {
+    var p = refreshing.get(l.id);
+    if (!p) {
+      p = cassyniUrl(l.file).then(function (u) { l.url = u.url; l.urlExp = u.exp; save(); });
+      p.then(function () { refreshing.delete(l.id); }, function () { refreshing.delete(l.id); });
+      refreshing.set(l.id, p);
+    }
+    return p;
+  }
+  function refreshStale() {
+    queue.filter(stale).reduce(function (p, l) {
+      return p.then(function () { return refreshUrl(l).catch(function () {}); });
+    }, Promise.resolve());
+  }
+
+  /* Saved files (IndexedDB) */
+  var dbp = null;
+  function db() {
+    if (!dbp) dbp = new Promise(function (res, rej) {
+      try {
+        var r = indexedDB.open('lectern', 1);
+        r.onupgradeneeded = function () { r.result.createObjectStore('files'); };
+        r.onsuccess = function () { res(r.result); };
+        r.onerror = function () { rej(r.error); };
+      } catch (e) { rej(e); }
+    });
+    return dbp;
+  }
+  function idb(mode, fn) {
+    return db().then(function (d) {
+      return new Promise(function (res, rej) {
+        var t = d.transaction('files', mode); var r = fn(t.objectStore('files'));
+        t.oncomplete = function () { res(r && r.result); }; t.onerror = function () { rej(t.error); }; t.onabort = function () { rej(t.error); };
+      });
+    });
+  }
+  function putFile(id, blob) { return idb('readwrite', function (s) { return s.put(blob, id); }); }
+  function getFile(id) { return idb('readonly', function (s) { return s.get(id); }); }
+  function delFile(id) { return idb('readwrite', function (s) { return s.delete(id); }).catch(function () {}); }
+
+  /* Icons */
+  var I = {
+    play: '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M8 5.5v13a1 1 0 0 0 1.5.86l10.5-6.5a1 1 0 0 0 0-1.72L9.5 4.64A1 1 0 0 0 8 5.5z"/></svg>',
+    pause: '<svg viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="5" width="4.2" height="14" rx="1.2"/><rect x="13.8" y="5" width="4.2" height="14" rx="1.2"/></svg>',
+    back: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 12a8 8 0 1 0 2.4-5.7"/><path d="M4 4v4h4"/></svg>',
+    fwd: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M20 12a8 8 0 1 1-2.4-5.7"/><path d="M20 4v4h-4"/></svg>',
+    up: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19V5M6 11l6-6 6 6"/></svg>',
+    trash: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7h16M9 7V4h6v3M6 7l1 13h10l1-13"/></svg>',
+    check: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg>'
+  };
+
+  /* Rendering */
+  function renderBoard() {
+    var l = byId(currentId), b = $('#board');
+    if (!l) {
+      b.innerHTML = '<div class="empty-board"><span class="label">Now playing</span>' +
+        '<p class="np-title">Nothing queued yet</p>' +
+        '<p>Tap Add to put a lecture in the queue. Paste its Cassyni link or pick a file you saved to your iPhone.</p></div>';
+      return;
+    }
+    var href = pageHref(l.page);
+    var playing = !audio.paused && !audio.ended;
+    var dur = audio.duration && isFinite(audio.duration) ? audio.duration : (l.duration || 0);
+    var pos = audio.src ? audio.currentTime : (l.position || 0);
+    b.innerHTML =
+      '<div><span class="label">Now playing</span>' +
+      '<p class="np-title">' + esc(l.title) + '</p>' +
+      '<div class="np-sub">' + esc(l.speaker || (l.kind === 'file' ? 'Saved file' : '')) +
+      (href ? (l.speaker ? ' · ' : '') + '<a href="' + esc(href) + '" target="_blank" rel="noopener">Lecture page</a>' : '') + '</div></div>' +
+      '<div class="scrub"><input type="range" id="seek" min="0" max="' + (dur || 1) + '" step="1" value="' + pos + '" aria-label="Position in lecture">' +
+      '<div class="times"><span id="tNow">' + fmt(pos) + '</span><span id="tLeft">−' + fmt(Math.max(0, dur - pos)) + '</span></div></div>' +
+      '<div class="transport">' +
+      '<button class="tbtn" id="bBack" type="button" aria-label="Back ' + BACK + ' seconds">' + I.back + '<span>' + BACK + '</span></button>' +
+      '<button class="tbtn play" id="bPlay" type="button" aria-label="' + (playing ? 'Pause' : 'Play') + '">' + (playing ? I.pause : I.play) + '</button>' +
+      '<button class="tbtn" id="bFwd" type="button" aria-label="Forward ' + FWD + ' seconds">' + I.fwd + '<span>' + FWD + '</span></button>' +
+      '</div>' +
+      '<div class="np-foot"><p class="msg" id="msg">' + esc(message) + '</p>' +
+      '<button class="chip" id="bRate" type="button" aria-label="Playback speed">' + rate + '×</button></div>';
+    paintSeek();
+    $('#bPlay').onclick = toggle;
+    $('#bBack').onclick = function () { skip(-BACK); };
+    $('#bFwd').onclick = function () { skip(FWD); };
+    $('#bRate').onclick = cycleRate;
+    var s = $('#seek');
+    s.oninput = function () { scrubbing = true; updateTimes(+s.value); paintSeek(); };
+    s.onchange = function () { scrubbing = false; if (audio.src) { audio.currentTime = +s.value; } else { l.position = +s.value; save(); } };
+  }
+  function paintSeek() {
+    var s = $('#seek'); if (!s) return;
+    var max = +s.max || 1; s.style.setProperty('--p', (100 * (+s.value) / max) + '%');
+  }
+  function updateTimes(pos) {
+    var dur = audio.duration && isFinite(audio.duration) ? audio.duration : 0;
+    var a = $('#tNow'), b = $('#tLeft');
+    if (a) a.textContent = fmt(pos);
+    if (b) b.textContent = '−' + fmt(Math.max(0, dur - pos));
+  }
+  function setMessage(m) { message = m || ''; var e = $('#msg'); if (e) e.textContent = message; }
+
+  function renderQueue() {
+    var q = $('#queue');
+    var remaining = queue.filter(function (l) { return !l.done; }).length;
+    $('#qCount').textContent = queue.length ? remaining + ' unplayed' : '';
+    if (!queue.length) { q.innerHTML = '<li class="qempty">Lectures you add appear here in play order.</li>'; return; }
+    q.innerHTML = queue.map(function (l, i) {
+      var cur = l.id === currentId;
+      var pct = l.duration ? Math.min(100, 100 * (l.position || 0) / l.duration) : 0;
+      var status = cur ? '<span class="pill now">Now</span>' : l.done ? '<span class="pill">Played</span>' : (l.position > 5 ? '<span class="pill">Started</span>' : '');
+      var meta = [status, l.speaker ? esc(l.speaker) : '', l.kind === 'file' ? 'Saved file' : '', !l.done && l.duration ? '<span class="mono">' + left(l) + '</span>' : ''].filter(Boolean).join('<span aria-hidden="true">·</span>');
+      var actions = confirmId === l.id
+        ? '<button class="ibtn confirm" data-act="del" data-id="' + l.id + '" type="button">Remove</button>'
+        : (i > 0 ? '<button class="ibtn" data-act="up" data-id="' + l.id + '" type="button" aria-label="Move up">' + I.up + '</button>' : '') +
+          '<button class="ibtn" data-act="done" data-id="' + l.id + '" type="button" aria-label="' + (l.done ? 'Mark unplayed' : 'Mark played') + '">' + I.check + '</button>' +
+          '<button class="ibtn" data-act="ask" data-id="' + l.id + '" type="button" aria-label="Remove">' + I.trash + '</button>';
+      return '<li class="item' + (cur ? ' current' : '') + (l.done ? ' done' : '') + '">' +
+        '<button class="item-main" data-act="play" data-id="' + l.id + '" type="button">' +
+        '<span class="item-title">' + esc(l.title) + '</span>' +
+        '<span class="item-meta">' + meta + '</span>' +
+        (pct > 0 && !l.done ? '<span class="bar"><i style="width:' + pct.toFixed(1) + '%"></i></span>' : '') +
+        '</button><span class="item-actions">' + actions + '</span></li>';
+    }).join('');
+  }
+  function render() { renderBoard(); renderQueue(); }
+
+  $('#queue').addEventListener('click', function (e) {
+    var t = e.target.closest('[data-act]'); if (!t) return;
+    var id = t.getAttribute('data-id'), act = t.getAttribute('data-act'), l = byId(id);
+    if (!l) return;
+    if (act !== 'ask' && act !== 'del') confirmId = null;
+    if (act === 'play') {
+      if (id === currentId && audio.src) { toggle(); return; }
+      if (l.done) { l.done = false; l.position = 0; }
+      load(id, true);
+    } else if (act === 'up') {
+      var i = queue.indexOf(l); if (i > 0) { queue.splice(i, 1); queue.splice(i - 1, 0, l); save(); renderQueue(); }
+    } else if (act === 'done') {
+      l.done = !l.done; l.position = 0; save();
+      if (l.done && id === currentId) { audio.pause(); next(false); } else renderQueue();
+    } else if (act === 'ask') {
+      confirmId = id; renderQueue();
+      setTimeout(function () { if (confirmId === id) { confirmId = null; renderQueue(); } }, 4000);
+    } else if (act === 'del') {
+      confirmId = null;
+      queue = queue.filter(function (x) { return x.id !== id; });
+      if (l.kind === 'file') { memFiles.delete(id); delFile(id); }
+      if (id === currentId) { unload(); currentId = null; var n = queue.filter(function (x) { return !x.done; })[0]; if (n) load(n.id, false); }
+      save(); render();
+    }
+  });
+
+  /* Playback */
+  function unload() {
+    audio.pause(); audio.removeAttribute('src'); audio.load();
+    if (objectUrl) { URL.revokeObjectURL(objectUrl); objectUrl = null; }
+  }
+  function load(id, autoplay, fresh) {
+    var l = byId(id); if (!l) return;
+    var seq = ++loadSeq;
+    if (!fresh && stale(l)) {
+      setMessage('Getting the recording from Cassyni…');
+      refreshUrl(l).then(function () {
+        if (seq === loadSeq) load(id, autoplay, true);
+      }, function (e) {
+        if (seq !== loadSeq) return;
+        persistPosition(); unload(); currentId = id; save(); render(); setMessage(e.message);
+      });
+      return;
+    }
+    persistPosition();
+    if (objectUrl) { URL.revokeObjectURL(objectUrl); objectUrl = null; }
+    currentId = id; save(); setMessage('');
+    var src = l.url;
+    if (l.kind === 'file') {
+      var blob = memFiles.get(id);
+      if (!blob) { audio.removeAttribute('src'); render(); setMessage('This file is no longer on this device. Remove it and add the file again.'); return; }
+      objectUrl = URL.createObjectURL(blob); src = objectUrl;
+    }
+    pendingResume = l.position || 0;
+    audio.src = src;
+    audio.defaultPlaybackRate = rate; audio.playbackRate = rate;
+    setMeta(l);
+    render();
+    if (autoplay) play();
+  }
+  function play() {
+    if (!audio.src) { var l = byId(currentId); if (l) { load(l.id, true); } return; }
+    var p = audio.play();
+    if (p && p.catch) p.catch(function (err) { if (err && err.name !== 'AbortError') setMessage('Tap play to start.'); });
+  }
+  function toggle() { if (audio.paused || audio.ended) play(); else audio.pause(); }
+  function skip(d) {
+    if (!audio.src || !isFinite(audio.duration)) return;
+    audio.currentTime = Math.max(0, Math.min(audio.duration - 0.5, audio.currentTime + d));
+  }
+  function cycleRate() {
+    rate = RATES[(RATES.indexOf(rate) + 1) % RATES.length];
+    audio.playbackRate = rate; audio.defaultPlaybackRate = rate; sset(KEY_RATE, rate);
+    var b = $('#bRate'); if (b) b.textContent = rate + '×';
+    posState();
+  }
+  function next(autoplay) {
+    var i = queue.findIndex(function (x) { return x.id === currentId; });
+    var after = queue.slice(i + 1).concat(queue.slice(0, Math.max(0, i)));
+    var n = after.filter(function (x) { return !x.done; })[0];
+    if (n) load(n.id, autoplay !== false);
+    else { unload(); render(); setMessage('Queue finished.'); }
+  }
+  function persistPosition() {
+    var l = byId(currentId);
+    if (!l || !audio.src || !isFinite(audio.currentTime) || audio.readyState < 1) return;
+    l.position = audio.currentTime;
+    if (isFinite(audio.duration)) l.duration = audio.duration;
+    save();
+  }
+
+  audio.addEventListener('loadedmetadata', function () {
+    var l = byId(currentId);
+    audio.playbackRate = rate;
+    if (l && isFinite(audio.duration)) {
+      l.duration = audio.duration;
+      if (pendingResume > 5 && pendingResume < audio.duration - 5) audio.currentTime = pendingResume;
+      pendingResume = 0; save();
+    }
+    var s = $('#seek'); if (s && isFinite(audio.duration)) { s.max = audio.duration; s.value = audio.currentTime; paintSeek(); updateTimes(audio.currentTime); }
+    posState(); renderQueue();
+  });
+  audio.addEventListener('timeupdate', function () {
+    if (!scrubbing) {
+      var s = $('#seek');
+      if (s) { s.value = audio.currentTime; paintSeek(); }
+      updateTimes(audio.currentTime);
+    }
+    var now = Date.now();
+    if (now - lastSave > 5000) { lastSave = now; persistPosition(); renderQueue(); }
+  });
+  audio.addEventListener('play', function () { setMessage(''); renderBoard(); setPlaybackState('playing'); });
+  audio.addEventListener('pause', function () { persistPosition(); renderBoard(); renderQueue(); setPlaybackState('paused'); });
+  audio.addEventListener('seeked', function () { persistPosition(); posState(); });
+  audio.addEventListener('ratechange', posState);
+  audio.addEventListener('ended', function () {
+    var l = byId(currentId); if (l) { l.done = true; l.position = 0; save(); }
+    next(true);
+  });
+  audio.addEventListener('error', function () {
+    if (!audio.getAttribute('src')) return;
+    var l = byId(currentId);
+    if (l && l.cassyni && Date.now() - (retryAt[l.id] || 0) > 60000) {
+      /* Most likely the signed link expired (e.g. paused overnight): get a new one and carry on from the same place */
+      retryAt[l.id] = Date.now();
+      if (audio.currentTime > 0) l.position = audio.currentTime;
+      l.urlExp = 0; save();
+      load(l.id, !audio.paused);
+      return;
+    }
+    setMessage(l && l.cassyni
+      ? 'Cassyni’s recording would not play right now. Try again later, or open the lecture page.'
+      : l && l.kind === 'url'
+      ? 'This link would not play. Check it is the direct recording link (.m3u8 or .mp4). Inside the Claude app, links from other sites are blocked; use your hosted copy of Lectern, or add the file instead.'
+      : 'This file could not be played. Try saving it as .mp4, .m4a or .mp3.');
+  });
+  window.addEventListener('pagehide', persistPosition);
+  document.addEventListener('visibilitychange', function () { if (document.hidden) persistPosition(); });
+
+  /* Lock screen */
+  var ms = 'mediaSession' in navigator ? navigator.mediaSession : null;
+  function handler(a, f) { try { ms.setActionHandler(a, f); } catch (e) {} }
+  if (ms) {
+    handler('play', play);
+    handler('pause', function () { audio.pause(); });
+    handler('seekbackward', function (d) { skip(-((d && d.seekOffset) || BACK)); });
+    handler('seekforward', function (d) { skip((d && d.seekOffset) || FWD); });
+    handler('seekto', function (d) {
+      if (d.fastSeek && audio.fastSeek) audio.fastSeek(d.seekTime); else audio.currentTime = d.seekTime;
+      posState();
+    });
+  }
+  function setPlaybackState(s) { if (ms) try { ms.playbackState = s; } catch (e) {} }
+  function posState() {
+    if (!ms || !ms.setPositionState || !isFinite(audio.duration) || audio.duration <= 0) return;
+    try { ms.setPositionState({ duration: audio.duration, playbackRate: audio.playbackRate || 1, position: Math.min(audio.currentTime, audio.duration) }); } catch (e) {}
+  }
+  function artwork(l) {
+    try {
+      var c = document.createElement('canvas'); c.width = c.height = 512;
+      var x = c.getContext('2d'), css = getComputedStyle(document.documentElement);
+      x.fillStyle = '#1E3D32'; x.fillRect(0, 0, 512, 512);
+      x.fillStyle = '#E9C75E'; x.font = '600 26px "Schibsted Grotesk", sans-serif'; x.fillText('LECTURE', 44, 78);
+      x.fillRect(44, 96, 56, 4);
+      x.fillStyle = '#EEF3EE'; x.font = '500 44px "Literata", Georgia, serif';
+      var words = String(l.title).split(/\s+/), line = '', y = 170, lines = 0;
+      for (var i = 0; i < words.length && lines < 6; i++) {
+        var test = line ? line + ' ' + words[i] : words[i];
+        if (x.measureText(test).width > 424 && line) { x.fillText(line, 44, y); y += 56; lines++; line = words[i]; }
+        else line = test;
+      }
+      if (lines < 6 && line) x.fillText(line, 44, y);
+      if (l.speaker) { x.fillStyle = '#A9C0B4'; x.font = '400 24px "Schibsted Grotesk", sans-serif'; x.fillText(String(l.speaker).slice(0, 34), 44, 468); }
+      return c.toDataURL('image/png');
+    } catch (e) { return null; }
+  }
+  function setMeta(l) {
+    if (!ms || typeof MediaMetadata === 'undefined') return;
+    try {
+      var art = artwork(l);
+      ms.metadata = new MediaMetadata({ title: l.title, artist: l.speaker || 'Cassyni lecture', album: 'Lectern', artwork: art ? [{ src: art, sizes: '512x512', type: 'image/png' }] : [] });
+    } catch (e) {}
+  }
+
+  /* Add panel */
+  var panel = $('#addPanel'), form = $('#addForm'), fileInput = $('#fFile'), chosen = null;
+  var URL_HINT = $('#fUrlHint').textContent, lookups = new Map(), autoFilled = {}, lookTimer = null;
+  function openAdd() { panel.hidden = false; $('#fErr').hidden = true; $('#fUrl').focus(); panel.scrollIntoView({ block: 'nearest' }); }
+  function closeAdd() { panel.hidden = true; form.reset(); chosen = null; autoFilled = {}; urlHint(); $('#fFileName').textContent = 'Audio or video from the Files app'; }
+  function urlHint(t) { $('#fUrlHint').textContent = t || URL_HINT; }
+  function lookup(s) {
+    var key = s.trim(), p = lookups.get(key);
+    if (!p) { p = cassyniLookup(cassyniRef(key)); lookups.set(key, p); p.catch(function () { lookups.delete(key); }); }
+    return p;
+  }
+  /* Fill a field from Cassyni unless the user has typed their own value */
+  function fill(sel, v) { var f = $(sel); if (v && (!f.value.trim() || f.value === autoFilled[sel])) { f.value = v; autoFilled[sel] = v; } }
+  $('#fUrl').addEventListener('input', function () {
+    clearTimeout(lookTimer);
+    var v = this.value.trim();
+    $('#fErr').hidden = true;
+    if (!cassyniRef(v)) { urlHint(); return; }
+    lookTimer = setTimeout(function () {
+      urlHint('Looking up the lecture on Cassyni…');
+      lookup(v).then(function (c) {
+        if ($('#fUrl').value.trim() !== v) return;
+        fill('#fTitle', c.title); fill('#fSpeaker', c.speaker); fill('#fPage', c.page);
+        urlHint('Found the recording' + (c.duration ? ' · ' + Math.round(c.duration / 60) + ' min' : '') + '. Check the details below, then add it.');
+      }, function (e) {
+        if ($('#fUrl').value.trim() !== v) return;
+        urlHint(); $('#fErr').textContent = e.message; $('#fErr').hidden = false;
+      });
+    }, 350);
+  });
+  $('#openAdd').onclick = function () { panel.hidden ? openAdd() : closeAdd(); };
+  $('#cancelAdd').onclick = closeAdd;
+  fileInput.onchange = function () {
+    chosen = fileInput.files && fileInput.files[0] || null;
+    $('#fFileName').textContent = chosen ? chosen.name + ' · ' + (chosen.size / 1048576).toFixed(0) + ' MB' : 'Audio or video from the Files app';
+    if (chosen && !$('#fTitle').value.trim()) $('#fTitle').value = chosen.name.replace(/\.[^.]+$/, '').replace(/[_-]+/g, ' ');
+  };
+  form.addEventListener('submit', function (e) {
+    e.preventDefault();
+    var err = $('#fErr');
+    var title = $('#fTitle').value.trim(), url = $('#fUrl').value.trim(), page = $('#fPage').value.trim();
+    function fail(m) { err.textContent = m; err.hidden = false; }
+    if (!chosen && cassyniRef(url)) {
+      var btn = form.querySelector('[type=submit]'), speaker = $('#fSpeaker').value.trim();
+      btn.disabled = true; err.hidden = true;
+      lookup(url).then(function (c) {
+        if (panel.hidden) return;
+        addLecture({ id: uid(), title: title || c.title || 'Cassyni lecture', speaker: speaker || c.speaker, page: page || c.page, kind: 'url', url: c.url, urlExp: c.exp, cassyni: c.event, file: c.file, position: 0, duration: c.duration, done: false, added: Date.now() });
+      }, function (e) { fail(e.message); }).then(function () { btn.disabled = false; });
+      return;
+    }
+    if (!url && !chosen) return fail('Add a Cassyni link, a recording link or a saved file.');
+    if (url && !/^https?:\/\//i.test(url)) return fail('The recording link should start with https://');
+    if (url && !chosen && /cassyni\.com\//i.test(url) && !/\.(m3u8|mp4|m4a|mp3|aac)(\?|$)/i.test(url)) {
+      return fail('That Cassyni page is not a single lecture. Open the lecture itself and copy its link.');
+    }
+    if (!title) return fail('Give the lecture a title so you can find it in the queue.');
+    var l = { id: uid(), title: title, speaker: $('#fSpeaker').value.trim(), page: page, kind: chosen ? 'file' : 'url', url: chosen ? '' : url, position: 0, duration: 0, done: false, added: Date.now() };
+    if (chosen) {
+      var f = chosen;
+      memFiles.set(l.id, f);
+      putFile(l.id, f).catch(function () { setMessage('This file plays now but could not be stored, so it will be gone after you close the page.'); });
+    }
+    addLecture(l);
+  });
+  function addLecture(l) {
+    queue.push(l);
+    var startNow = !byId(currentId) || (audio.paused && !audio.src);
+    save(); closeAdd();
+    if (startNow) load(l.id, false); else render();
+  }
+
+  /* Start: restore saved files, then the last lecture */
+  function boot() {
+    var fileIds = queue.filter(function (l) { return l.kind === 'file'; }).map(function (l) { return l.id; });
+    Promise.all(fileIds.map(function (id) {
+      return getFile(id).then(function (b) { if (b) memFiles.set(id, b); }).catch(function () {});
+    })).then(function () {
+      if (!byId(currentId)) { var n = queue.filter(function (x) { return !x.done; })[0]; currentId = n ? n.id : null; }
+      if (currentId) load(currentId, false); else render();
+      refreshStale();
+    });
+  }
+  /* Renew expired Cassyni links ahead of time, so tapping a lecture can start it straight away */
+  document.addEventListener('visibilitychange', function () { if (!document.hidden) refreshStale(); });
+  render();
+  boot();
+})();
+</script>
+
+</body>
+</html>
